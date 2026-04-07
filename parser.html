@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<link rel="stylesheet" href="style.css">
+<meta charset="UTF-8">
+<title>RQ DPS</title>
+</head>
+
+<body>
+
+<div class="container">
+    <div class="controls">
+        <input type="file" id="fileInput" accept=".htm,.html">
+        <button id="refreshBtn">Обновить лог</button>
+        <select id="targetSelect"></select>
+    </div>
+
+    <div id="result"></div>
+</div>
+
+<script>
+
+// ===== БОССЫ =====
+const bosses = {
+    "Архон": 9771080,
+    "Баксбакуалануксивайе": 178354700,
+    "Воко": 214548640,
+    "Гигантская Тортолла": 39479610,
+    "Денгур Кровавый топор": 186641800,
+    "Деструктор": 22899550,
+    "Древний Энт": 21784250,
+    "Зверомор": 51371450,
+    "Королева Крыс": 5189760,
+    "Хьюго": 179809740,
+    "Эдвард": 167511470,
+    "Золотой Таракан": 2717280,
+    "Советник Остина": 45012364,
+    "Пламярык": 65146044,
+    "Богатый Упырь": 5189760
+};
+
+
+
+let parsedRows = [];
+let currentFile = null;
+let currentTarget = null;
+
+// ===== ЗАГРУЗКА =====
+document.getElementById("fileInput").addEventListener("change", function(e) {
+    currentFile = e.target.files[0];
+    if (!currentFile) return;
+
+    readFile(currentFile, true);
+});
+
+// ===== ОБНОВИТЬ =====
+document.getElementById("refreshBtn").addEventListener("click", function() {
+    if (!currentFile) {
+        alert("Сначала выбери файл");
+        return;
+    }
+
+    readFile(currentFile, false);
+});
+
+// ===== ЧТЕНИЕ ФАЙЛА =====
+function readFile(file, rebuildTargets) {
+    const reader = new FileReader();
+
+    reader.onload = function(event) {
+        const text = event.target.result;
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, "text/html");
+
+        const rows = doc.querySelectorAll("tr");
+
+        parsedRows = [];
+        const targets = new Set();
+
+        rows.forEach(row => {
+            const textContent = row.innerText;
+
+            const match = textContent.match(/Вы нанесли (\d+) урона\. Цель: (.+)/);
+            if (!match) return;
+
+            const damage = parseInt(match[1]);
+            if (damage <= 0) return;
+
+            const target = match[2].trim();
+            const time = row.getAttribute("title");
+
+            if (!time) return;
+
+            if (bosses[target]) {
+                parsedRows.push({ damage, target, time });
+                targets.add(target);
+            }
+        });
+
+        const select = document.getElementById("targetSelect");
+
+        if (rebuildTargets) {
+            select.innerHTML = "";
+
+            targets.forEach(t => {
+                const option = document.createElement("option");
+                option.value = t;
+                option.textContent = t;
+                select.appendChild(option);
+            });
+
+            // 🔥 фикс бага — авто выбор
+            if (select.options.length > 0) {
+                const first = select.options[0].value;
+                select.value = first;
+                currentTarget = first;
+                processTarget(first);
+            }
+        } else {
+            if (currentTarget) {
+                processTarget(currentTarget);
+            }
+        }
+    };
+
+    reader.readAsText(file);
+}
+
+// ===== ВЫБОР ТАРГЕТА =====
+document.getElementById("targetSelect").addEventListener("change", function() {
+    currentTarget = this.value;
+
+    document.getElementById("result").innerHTML = "Загрузка...";
+
+    setTimeout(() => {
+        processTarget(currentTarget);
+    }, 0);
+});
+
+// ===== ОБРАБОТКА =====
+function processTarget(target) {
+    if (!target) return;
+
+    const filtered = parsedRows
+        .filter(r => r.target === target)
+        .sort((a, b) => parseTime(a.time) - parseTime(b.time));
+
+    if (filtered.length === 0) {
+        renderTable([]);
+        return;
+    }
+
+    const sessions = [];
+    let currentSession = [];
+
+    const MAX_GAP = 5 * 60;
+
+    for (let i = 0; i < filtered.length; i++) {
+        const current = filtered[i];
+
+        if (currentSession.length === 0) {
+            currentSession.push(current);
+            continue;
+        }
+
+        const prev = currentSession[currentSession.length - 1];
+
+        const diff = (parseTime(current.time) - parseTime(prev.time)) / 1000;
+
+        if (diff > MAX_GAP) {
+            sessions.push(currentSession);
+            currentSession = [current];
+        } else {
+            currentSession.push(current);
+        }
+    }
+
+    if (currentSession.length > 0) {
+        sessions.push(currentSession);
+    }
+
+    renderTable(sessions);
+}
+
+// ===== ВСПОМОГАТЕЛЬНЫЕ =====
+function parseTime(t) {
+    const [date, time] = t.split(" ");
+    return new Date(`2024/${date} ${time}`);
+}
+
+function formatNumber(num) {
+    return num.toLocaleString("ru-RU");
+}
+
+function getPercentColor(percent) {
+    if (percent > 90) return "#4caf50";
+    if (percent > 50) return "#ffc107";
+    return "#f44336";
+}
+
+function copyRow(seconds, dmg, dps, percent) {
+    const text =
+`t: ${seconds}
+dmg: ${formatNumber(dmg)}
+dps: ${formatNumber(Math.floor(dps))}
+hp: ${percent.toFixed(2)}%`;
+
+    navigator.clipboard.writeText(text);
+}
+
+// ===== РЕНДЕР =====
+function renderTable(sessions) {
+    const resultEl = document.getElementById("result");
+    resultEl.innerHTML = "";
+
+    if (!sessions || sessions.length === 0) {
+        resultEl.innerHTML = "<p>Нет данных</p>";
+        return;
+    }
+
+    let html = `
+    <table>
+        <tr>
+            <th>Начало</th>
+            <th>Конец</th>
+            <th>Время</th>
+            <th>Урон</th>
+            <th>% HP</th>
+            <th>Max Hit</th>
+            <th>DPS</th>
+            <th></th>
+        </tr>
+    `;
+
+    sessions.forEach(session => {
+        if (!session || session.length === 0) return;
+
+        let totalDamage = 0;
+        let maxHit = 0;
+
+        session.forEach(r => {
+            totalDamage += r.damage;
+            if (r.damage > maxHit) maxHit = r.damage;
+        });
+
+        const start = parseTime(session[0].time);
+        const end = parseTime(session[session.length - 1].time);
+
+        const seconds = Math.floor((end - start) / 1000) || 1;
+        const dps = totalDamage / seconds;
+
+        const bossHP = bosses[session[0].target];
+        const percent = bossHP ? (totalDamage / bossHP) * 100 : 0;
+
+        const color = getPercentColor(percent);
+
+        html += `
+        <tr>
+            <td>${session[0].time}</td>
+            <td>${session[session.length - 1].time}</td>
+            <td>${seconds}</td>
+            <td>${formatNumber(totalDamage)}</td>
+            <td style="color:${color}">${percent.toFixed(2)}%</td>
+            <td>${formatNumber(maxHit)}</td>
+            <td>${formatNumber(Math.floor(dps))}</td>
+            <td>
+                <button onclick="copyRow(${seconds}, ${totalDamage}, ${dps}, ${percent})">
+                    📋
+                </button>
+            </td>
+        </tr>
+        `;
+    });
+
+    html += `</table>`;
+
+    resultEl.innerHTML = html;
+}
+
+</script>
+
+</body>
+</html>
