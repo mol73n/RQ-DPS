@@ -192,11 +192,11 @@ function parseTime(t) {
 function formatNumber(num) {
     return num.toLocaleString("ru-RU");
 }
-
+// ПЕРЕДЕЛАТЬ!!!!!!
 function getPercentColor(percent) {
     if (percent > 90) return "#4caf50";
-    if (percent > 50) return "#ffc107";
-    return "#f44336";
+    if (percent > 50) return "#4caf50";
+    return "#4caf50";
 }
 
 function copyRow(seconds, dmg, dps, percent) {
