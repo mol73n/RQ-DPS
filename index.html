@@ -99,6 +99,23 @@
   tbody tr.active-session td { background: #1a1f30; border-bottom-color: #2a3050; }
 
   /* ===== ПРАВАЯ ПАНЕЛЬ: ГРАФИК ===== */
+  /* ===== РАЗДЕЛИТЕЛЬ ===== */
+  .splitter {
+    flex-shrink: 0;
+    width: 5px;
+    cursor: col-resize;
+    background: #2a2d3a;
+    border-radius: 3px;
+    transition: background 0.15s;
+    position: relative;
+  }
+  .splitter:hover, .splitter.dragging { background: #4a7fa5; }
+  .splitter::after {
+    content: '';
+    position: absolute;
+    inset: 0 -4px;
+  }
+
   .chart-panel {
     width: 60%;
     flex-shrink: 0;
@@ -141,7 +158,22 @@
   }
 
   /* ===== ОБЩИЕ ===== */
-  input[type="file"] { color: #aaa; font-size: 12px; }
+  input[type="file"] { display: none; }
+
+  .file-btn {
+    background: #1e2130;
+    color: #c9cdd6;
+    border: 1px solid #3a3d50;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    transition: background 0.15s;
+    white-space: nowrap;
+  }
+  .file-btn:hover { background: #2a2d40; }
+  .file-btn.has-file { border-color: #4a7fa5; color: #4a7fa5; }
 
   button {
     background: #1e2130;
@@ -170,6 +202,36 @@
   select:focus, button:focus { outline: 1px solid #4a6fa5; }
   label { color: #555; font-size: 11px; white-space: nowrap; }
 
+  input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: #2a2d3a;
+    outline: none;
+    cursor: pointer;
+    flex: 1;
+    min-width: 60px;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #4a7fa5;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  input[type="range"]::-webkit-slider-thumb:hover { background: #5a8fb5; }
+  input[type="range"]::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #4a7fa5;
+    border: none;
+    cursor: pointer;
+  }
+
   #result-empty { color: #444; text-align: center; padding: 20px; }
 </style>
 </head>
@@ -179,6 +241,7 @@
 
   <div class="controls">
     <input type="file" id="fileInput" accept=".htm,.html">
+    <label for="fileInput" class="file-btn" id="fileLabel">📂 Открыть лог</label>
     <button id="refreshBtn">Обновить лог</button>
     <label>Босс:</label>
     <select id="targetSelect"></select>
@@ -209,11 +272,16 @@
       </div>
     </div>
 
-    <div class="chart-panel">
+    <div class="splitter" id="splitter"></div>
+
+    <div class="chart-panel" id="chartPanel">
       <div class="chart-header">
-        <span>График DPS</span>
+        <span>DPS</span>
         <label>Сессия:</label>
         <select id="sessionSelect"></select>
+        <label style="margin-left:6px">Окно:</label>
+        <input type="range" id="rollingWindow" min="1" max="10" value="5" step="1">
+        <span id="rollingWindowValue" style="color:#c9cdd6; min-width:24px">5s</span>
       </div>
       <div class="chart-canvas-wrap">
         <canvas id="dpsChart"></canvas>
@@ -249,9 +317,20 @@ let currentTarget = null;
 let currentSessions = [];
 let chart = null;
 
+const select = document.getElementById("targetSelect");
+Object.keys(bosses).forEach(name => {
+    const option = document.createElement("option");
+    option.value = name;
+    option.textContent = name;
+    select.appendChild(option);
+});
+
 document.getElementById("fileInput").addEventListener("change", function(e) {
     currentFile = e.target.files[0];
     if (!currentFile) return;
+    const label = document.getElementById("fileLabel");
+    label.textContent = "📄 " + currentFile.name;
+    label.classList.add("has-file");
     readFile(currentFile, true);
 });
 
@@ -427,12 +506,24 @@ function highlightTableRow(index) {
     if (row) row.classList.add("active-session");
 }
 
+document.getElementById("rollingWindow").addEventListener("input", function() {
+    document.getElementById("rollingWindowValue").textContent = this.value + "s";
+    const index = parseInt(document.getElementById("sessionSelect").value) || 0;
+    drawChartForSession(index);
+});
+
 function drawChartForSession(index) {
     const session = currentSessions[index];
     if (!session) return;
+    const windowSize = parseInt(document.getElementById("rollingWindow").value);
     const raw = buildDpsTimeline(session);
-    const rolling = buildRollingDps(raw, 5);
-    drawChart(raw, rolling);
+    const rolling = buildRollingDps(raw, windowSize);
+    const totalDamage = session.reduce((s, r) => s + r.damage, 0);
+    const start = parseTime(session[0].time);
+    const end = parseTime(session[session.length - 1].time);
+    const seconds = Math.floor((end - start) / 1000) || 1;
+    const avgDps = Math.round(totalDamage / seconds);
+    drawChart(raw, rolling, windowSize, avgDps);
 }
 
 function buildDpsTimeline(session) {
@@ -456,7 +547,7 @@ function buildRollingDps(data, windowSize = 5) {
     return result;
 }
 
-function drawChart(data, rollingData) {
+function drawChart(data, rollingData, windowSize, avgDps) {
     const ctx = document.getElementById("dpsChart").getContext("2d");
     if (chart) chart.destroy();
     chart = new Chart(ctx, {
@@ -465,17 +556,7 @@ function drawChart(data, rollingData) {
             labels: data.map((_, i) => i + "s"),
             datasets: [
                 {
-                    label: "Raw DPS",
-                    data: data,
-                    borderColor: "#3a4060",
-                    backgroundColor: "transparent",
-                    borderWidth: 1,
-                    tension: 0.2,
-                    hidden: true,
-                    pointRadius: 0
-                },
-                {
-                    label: "Rolling DPS (5s)",
+                    label: `Rolling DPS (${windowSize}s)`,
                     data: rollingData,
                     borderColor: "#4a7fa5",
                     backgroundColor: "rgba(74,127,165,0.08)",
@@ -483,6 +564,16 @@ function drawChart(data, rollingData) {
                     tension: 0.3,
                     pointRadius: 0,
                     fill: true
+                },
+                {
+                    label: "Avg DPS",
+                    data: Array(rollingData.length).fill(avgDps),
+                    borderColor: "rgba(240,168,48,0.6)",
+                    borderWidth: 1,
+                    borderDash: [6, 3],
+                    pointRadius: 0,
+                    fill: false,
+                    tension: 0
                 }
             ]
         },
@@ -490,9 +581,29 @@ function drawChart(data, rollingData) {
             responsive: true,
             maintainAspectRatio: false,
             animation: { duration: 200 },
+            interaction: {
+                mode: "index",
+                intersect: false
+            },
             plugins: {
-                legend: {
-                    labels: { color: "#5a6070", font: { family: "'Courier New', monospace", size: 11 } }
+                legend: { display: false },
+                tooltip: {
+                    backgroundColor: "#1e2130",
+                    borderColor: "#3a3d50",
+                    borderWidth: 1,
+                    titleColor: "#5a6070",
+                    bodyColor: "#c9cdd6",
+                    titleFont: { family: "'Courier New', monospace", size: 10 },
+                    bodyFont: { family: "'Courier New', monospace", size: 11 },
+                    padding: 8,
+                    callbacks: {
+                        label: function(ctx) {
+                            const label = ctx.datasetIndex === 0
+                                ? `Rolling (${windowSize}s)`
+                                : "Avg";
+                            return " " + label + ": " + ctx.parsed.y.toLocaleString("ru-RU");
+                        }
+                    }
                 }
             },
             scales: {
@@ -511,10 +622,44 @@ function parseTime(t) {
 function formatNumber(num) { return num.toLocaleString("ru-RU"); }
 
 function getPercentColor(percent) {
-    if (percent >= 80) return "#4caf50";
-    if (percent >= 40) return "#4caf50";
-    return "#4caf50";
+    if (percent >= 80) return "#f0a830";
+    if (percent >= 40) return "#f0a830";
+    return "#f0a830";
 }
+
+// ===== SPLITTER =====
+(function() {
+    const splitter = document.getElementById("splitter");
+    const chartPanel = document.getElementById("chartPanel");
+    const content = splitter.parentElement;
+    let startX, startWidth;
+
+    splitter.addEventListener("mousedown", function(e) {
+        startX = e.clientX;
+        startWidth = chartPanel.offsetWidth;
+        splitter.classList.add("dragging");
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+
+        function onMove(e) {
+            const delta = startX - e.clientX;
+            const newWidth = Math.max(200, Math.min(content.offsetWidth - 200, startWidth + delta));
+            chartPanel.style.width = newWidth + "px";
+            if (chart) chart.resize();
+        }
+
+        function onUp() {
+            splitter.classList.remove("dragging");
+            document.body.style.cursor = "";
+            document.body.style.userSelect = "";
+            document.removeEventListener("mousemove", onMove);
+            document.removeEventListener("mouseup", onUp);
+        }
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+    });
+})();
 
 function copyRow(seconds, dmg, dps, percent) {
     const text =
