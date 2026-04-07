@@ -1,26 +1,230 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<link rel="stylesheet" href="style.css">
 <meta charset="UTF-8">
 <title>RQ DPS</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #0e0f14;
+    color: #c9cdd6;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+  }
+
+  /* ===== КОРНЕВОЙ LAYOUT ===== */
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 12px 16px;
+    gap: 10px;
+  }
+
+  /* ===== CONTROLS ===== */
+  .controls {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    background: #161820;
+    border: 1px solid #2a2d3a;
+    border-radius: 6px;
+  }
+
+  /* ===== ОСНОВНОЙ КОНТЕНТ ===== */
+  .content {
+    flex: 1;
+    display: flex;
+    gap: 10px;
+    min-height: 0;
+  }
+
+  /* ===== ЛЕВАЯ ПАНЕЛЬ: ТАБЛИЦА ===== */
+  .table-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: #161820;
+    border: 1px solid #2a2d3a;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .table-scroll {
+    flex: 1;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #2a2d3a #161820;
+  }
+
+  .table-scroll::-webkit-scrollbar { width: 6px; }
+  .table-scroll::-webkit-scrollbar-track { background: #161820; }
+  .table-scroll::-webkit-scrollbar-thumb { background: #2a2d3a; border-radius: 3px; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #161820;
+    color: #5a6070;
+    font-weight: normal;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #2a2d3a;
+  }
+
+  td {
+    padding: 6px 10px;
+    border-bottom: 1px solid #1c1f2a;
+    white-space: nowrap;
+  }
+
+  tbody tr:hover td { background: #1a1d28; cursor: pointer; }
+  tbody tr.active-session td { background: #1a1f30; border-bottom-color: #2a3050; }
+
+  /* ===== ПРАВАЯ ПАНЕЛЬ: ГРАФИК ===== */
+  .chart-panel {
+    width: 60%;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    background: #161820;
+    border: 1px solid #2a2d3a;
+    border-radius: 6px;
+    padding: 12px 14px;
+    min-height: 0;
+  }
+
+  .chart-header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .chart-header span {
+    color: #5a6070;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+  }
+
+  .chart-canvas-wrap {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+  }
+
+  #dpsChart {
+    position: absolute;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  /* ===== ОБЩИЕ ===== */
+  input[type="file"] { color: #aaa; font-size: 12px; }
+
+  button {
+    background: #1e2130;
+    color: #c9cdd6;
+    border: 1px solid #3a3d50;
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 12px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #2a2d40; }
+
+  select {
+    background: #1e2130;
+    color: #c9cdd6;
+    border: 1px solid #3a3d50;
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+  }
+
+  select:focus, button:focus { outline: 1px solid #4a6fa5; }
+  label { color: #555; font-size: 11px; white-space: nowrap; }
+
+  #result-empty { color: #444; text-align: center; padding: 20px; }
+</style>
 </head>
 
 <body>
+<div class="app">
 
-<div class="container">
-    <div class="controls">
-        <input type="file" id="fileInput" accept=".htm,.html">
-        <button id="refreshBtn">Обновить лог</button>
-        <select id="targetSelect"></select>
+  <div class="controls">
+    <input type="file" id="fileInput" accept=".htm,.html">
+    <button id="refreshBtn">Обновить лог</button>
+    <label>Босс:</label>
+    <select id="targetSelect"></select>
+  </div>
+
+  <div class="content">
+
+    <div class="table-panel">
+      <div class="table-scroll">
+        <table id="sessionsTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Начало</th>
+              <th>Конец</th>
+              <th>Время</th>
+              <th>Урон</th>
+              <th>% HP</th>
+              <th>Max Hit</th>
+              <th>DPS</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="sessionsBody">
+            <tr><td colspan="9" id="result-empty">Нет данных</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <div id="result"></div>
+    <div class="chart-panel">
+      <div class="chart-header">
+        <span>График DPS</span>
+        <label>Сессия:</label>
+        <select id="sessionSelect"></select>
+      </div>
+      <div class="chart-canvas-wrap">
+        <canvas id="dpsChart"></canvas>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <script>
 
-// ===== БОССЫ =====
 const bosses = {
     "Архон": 9771080,
     "Баксбакуалануксивайе": 178354700,
@@ -39,40 +243,40 @@ const bosses = {
     "Богатый Упырь": 5189760
 };
 
-
-
 let parsedRows = [];
 let currentFile = null;
 let currentTarget = null;
+let currentSessions = [];
+let chart = null;
 
-// ===== ЗАГРУЗКА =====
 document.getElementById("fileInput").addEventListener("change", function(e) {
     currentFile = e.target.files[0];
     if (!currentFile) return;
-
     readFile(currentFile, true);
 });
 
-// ===== ОБНОВИТЬ =====
 document.getElementById("refreshBtn").addEventListener("click", function() {
-    if (!currentFile) {
-        alert("Сначала выбери файл");
-        return;
-    }
-
+    if (!currentFile) { alert("Сначала выбери файл"); return; }
     readFile(currentFile, false);
 });
 
-// ===== ЧТЕНИЕ ФАЙЛА =====
+document.getElementById("targetSelect").addEventListener("change", function() {
+    currentTarget = this.value;
+    setTimeout(() => processTarget(currentTarget), 0);
+});
+
+document.getElementById("sessionSelect").addEventListener("change", function() {
+    const index = parseInt(this.value);
+    drawChartForSession(index);
+    highlightTableRow(index);
+});
+
 function readFile(file, rebuildTargets) {
     const reader = new FileReader();
-
     reader.onload = function(event) {
         const text = event.target.result;
-
         const parser = new DOMParser();
         const doc = parser.parseFromString(text, "text/html");
-
         const rows = doc.querySelectorAll("tr");
 
         parsedRows = [];
@@ -80,18 +284,13 @@ function readFile(file, rebuildTargets) {
 
         rows.forEach(row => {
             const textContent = row.innerText;
-
             const match = textContent.match(/Вы нанесли (\d+) урона\. Цель: (.+)/);
             if (!match) return;
-
             const damage = parseInt(match[1]);
             if (damage <= 0) return;
-
             const target = match[2].trim();
             const time = row.getAttribute("title");
-
             if (!time) return;
-
             if (bosses[target]) {
                 parsedRows.push({ damage, target, time });
                 targets.add(target);
@@ -99,18 +298,14 @@ function readFile(file, rebuildTargets) {
         });
 
         const select = document.getElementById("targetSelect");
-
         if (rebuildTargets) {
             select.innerHTML = "";
-
             targets.forEach(t => {
                 const option = document.createElement("option");
                 option.value = t;
                 option.textContent = t;
                 select.appendChild(option);
             });
-
-            // 🔥 фикс бага — авто выбор
             if (select.options.length > 0) {
                 const first = select.options[0].value;
                 select.value = first;
@@ -118,85 +313,207 @@ function readFile(file, rebuildTargets) {
                 processTarget(first);
             }
         } else {
-            if (currentTarget) {
-                processTarget(currentTarget);
-            }
+            if (currentTarget) processTarget(currentTarget);
         }
     };
-
     reader.readAsText(file);
 }
 
-// ===== ВЫБОР ТАРГЕТА =====
-document.getElementById("targetSelect").addEventListener("change", function() {
-    currentTarget = this.value;
-
-    document.getElementById("result").innerHTML = "Загрузка...";
-
-    setTimeout(() => {
-        processTarget(currentTarget);
-    }, 0);
-});
-
-// ===== ОБРАБОТКА =====
 function processTarget(target) {
     if (!target) return;
-
     const filtered = parsedRows
         .filter(r => r.target === target)
         .sort((a, b) => parseTime(a.time) - parseTime(b.time));
 
-    if (filtered.length === 0) {
-        renderTable([]);
-        return;
-    }
+    if (filtered.length === 0) { renderTable([]); return; }
 
     const sessions = [];
     let currentSession = [];
-
     const MAX_GAP = 5 * 60;
 
     for (let i = 0; i < filtered.length; i++) {
         const current = filtered[i];
-
-        if (currentSession.length === 0) {
-            currentSession.push(current);
-            continue;
-        }
-
+        if (currentSession.length === 0) { currentSession.push(current); continue; }
         const prev = currentSession[currentSession.length - 1];
-
         const diff = (parseTime(current.time) - parseTime(prev.time)) / 1000;
-
-        if (diff > MAX_GAP) {
-            sessions.push(currentSession);
-            currentSession = [current];
-        } else {
-            currentSession.push(current);
-        }
+        if (diff > MAX_GAP) { sessions.push(currentSession); currentSession = [current]; }
+        else currentSession.push(current);
     }
-
-    if (currentSession.length > 0) {
-        sessions.push(currentSession);
-    }
-
+    if (currentSession.length > 0) sessions.push(currentSession);
     renderTable(sessions);
 }
 
-// ===== ВСПОМОГАТЕЛЬНЫЕ =====
+function renderTable(sessions) {
+    const tbody = document.getElementById("sessionsBody");
+    tbody.innerHTML = "";
+
+    if (!sessions || sessions.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="9" id="result-empty">Нет данных</td></tr>`;
+        currentSessions = [];
+        rebuildSessionSelect([]);
+        return;
+    }
+
+    currentSessions = sessions;
+    rebuildSessionSelect(sessions);
+
+    sessions.forEach((session, i) => {
+        if (!session || session.length === 0) return;
+
+        let totalDamage = 0, maxHit = 0;
+        session.forEach(r => {
+            totalDamage += r.damage;
+            if (r.damage > maxHit) maxHit = r.damage;
+        });
+
+        const start = parseTime(session[0].time);
+        const end = parseTime(session[session.length - 1].time);
+        const seconds = Math.floor((end - start) / 1000) || 1;
+        const dps = totalDamage / seconds;
+        const bossHP = bosses[session[0].target];
+        const percent = bossHP ? (totalDamage / bossHP) * 100 : 0;
+        const color = getPercentColor(percent);
+
+        const tr = document.createElement("tr");
+        tr.id = `session-row-${i}`;
+        tr.innerHTML = `
+            <td style="color:#555">${i + 1}</td>
+            <td>${session[0].time}</td>
+            <td>${session[session.length - 1].time}</td>
+            <td>${seconds}s</td>
+            <td>${formatNumber(totalDamage)}</td>
+            <td style="color:${color}">${percent.toFixed(2)}%</td>
+            <td>${formatNumber(maxHit)}</td>
+            <td>${formatNumber(Math.floor(dps))}</td>
+            <td><button onclick="event.stopPropagation(); copyRow(${seconds}, ${totalDamage}, ${dps}, ${percent})">📋</button></td>
+        `;
+        tr.addEventListener("click", () => selectSessionFromTable(i));
+        tbody.appendChild(tr);
+    });
+
+    setTimeout(() => {
+        drawChartForSession(0);
+        highlightTableRow(0);
+    }, 0);
+}
+
+function rebuildSessionSelect(sessions) {
+    const sessionSelect = document.getElementById("sessionSelect");
+    sessionSelect.innerHTML = "";
+    sessions.forEach((session, i) => {
+        const start = parseTime(session[0].time);
+        const end = parseTime(session[session.length - 1].time);
+        const seconds = Math.floor((end - start) / 1000) || 1;
+        let totalDamage = 0;
+        session.forEach(r => totalDamage += r.damage);
+        const dps = Math.floor(totalDamage / seconds);
+        const option = document.createElement("option");
+        option.value = i;
+        option.textContent = `#${i + 1}  ${session[0].time}  (${formatNumber(dps)} dps)`;
+        sessionSelect.appendChild(option);
+    });
+    sessionSelect.value = 0;
+}
+
+function selectSessionFromTable(index) {
+    document.getElementById("sessionSelect").value = index;
+    drawChartForSession(index);
+    highlightTableRow(index);
+}
+
+function highlightTableRow(index) {
+    document.querySelectorAll("#sessionsBody tr").forEach(row => row.classList.remove("active-session"));
+    const row = document.getElementById(`session-row-${index}`);
+    if (row) row.classList.add("active-session");
+}
+
+function drawChartForSession(index) {
+    const session = currentSessions[index];
+    if (!session) return;
+    const raw = buildDpsTimeline(session);
+    const rolling = buildRollingDps(raw, 5);
+    drawChart(raw, rolling);
+}
+
+function buildDpsTimeline(session) {
+    const timeline = [];
+    const start = parseTime(session[0].time);
+    session.forEach(hit => {
+        const sec = Math.floor((parseTime(hit.time) - start) / 1000);
+        if (!timeline[sec]) timeline[sec] = 0;
+        timeline[sec] += hit.damage;
+    });
+    return timeline.map(v => v || 0);
+}
+
+function buildRollingDps(data, windowSize = 5) {
+    const result = [];
+    for (let i = 0; i < data.length; i++) {
+        let sum = 0, count = 0;
+        for (let j = i; j > i - windowSize && j >= 0; j--) { sum += data[j]; count++; }
+        result.push(Math.round(sum / count));
+    }
+    return result;
+}
+
+function drawChart(data, rollingData) {
+    const ctx = document.getElementById("dpsChart").getContext("2d");
+    if (chart) chart.destroy();
+    chart = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: data.map((_, i) => i + "s"),
+            datasets: [
+                {
+                    label: "Raw DPS",
+                    data: data,
+                    borderColor: "#3a4060",
+                    backgroundColor: "transparent",
+                    borderWidth: 1,
+                    tension: 0.2,
+                    hidden: true,
+                    pointRadius: 0
+                },
+                {
+                    label: "Rolling DPS (5s)",
+                    data: rollingData,
+                    borderColor: "#4a7fa5",
+                    backgroundColor: "rgba(74,127,165,0.08)",
+                    borderWidth: 2,
+                    tension: 0.3,
+                    pointRadius: 0,
+                    fill: true
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 200 },
+            plugins: {
+                legend: {
+                    labels: { color: "#5a6070", font: { family: "'Courier New', monospace", size: 11 } }
+                }
+            },
+            scales: {
+                x: { ticks: { color: "#3a4050", font: { size: 10 } }, grid: { color: "#1a1d28" } },
+                y: { ticks: { color: "#3a4050", font: { size: 10 } }, grid: { color: "#1a1d28" } }
+            }
+        }
+    });
+}
+
 function parseTime(t) {
     const [date, time] = t.split(" ");
     return new Date(`2024/${date} ${time}`);
 }
 
-function formatNumber(num) {
-    return num.toLocaleString("ru-RU");
-}
-// ПЕРЕДЕЛАТЬ!!!!!!
+function formatNumber(num) { return num.toLocaleString("ru-RU"); }
+
 function getPercentColor(percent) {
-    if (percent > 90) return "#4caf50";
-    if (percent > 50) return "#4caf50";
-    return "#4caf50";
+    if (percent >= 80) return "#4caf50";
+    if (percent >= 40) return "#f0a830";
+    return "#e05050";
 }
 
 function copyRow(seconds, dmg, dps, percent) {
@@ -205,80 +522,9 @@ function copyRow(seconds, dmg, dps, percent) {
 dmg: ${formatNumber(dmg)}
 dps: ${formatNumber(Math.floor(dps))}
 hp: ${percent.toFixed(2)}%`;
-
     navigator.clipboard.writeText(text);
 }
 
-// ===== РЕНДЕР =====
-function renderTable(sessions) {
-    const resultEl = document.getElementById("result");
-    resultEl.innerHTML = "";
-
-    if (!sessions || sessions.length === 0) {
-        resultEl.innerHTML = "<p>Нет данных</p>";
-        return;
-    }
-
-    let html = `
-    <table>
-        <tr>
-            <th>Начало</th>
-            <th>Конец</th>
-            <th>Время</th>
-            <th>Урон</th>
-            <th>% HP</th>
-            <th>Max Hit</th>
-            <th>DPS</th>
-            <th></th>
-        </tr>
-    `;
-
-    sessions.forEach(session => {
-        if (!session || session.length === 0) return;
-
-        let totalDamage = 0;
-        let maxHit = 0;
-
-        session.forEach(r => {
-            totalDamage += r.damage;
-            if (r.damage > maxHit) maxHit = r.damage;
-        });
-
-        const start = parseTime(session[0].time);
-        const end = parseTime(session[session.length - 1].time);
-
-        const seconds = Math.floor((end - start) / 1000) || 1;
-        const dps = totalDamage / seconds;
-
-        const bossHP = bosses[session[0].target];
-        const percent = bossHP ? (totalDamage / bossHP) * 100 : 0;
-
-        const color = getPercentColor(percent);
-
-        html += `
-        <tr>
-            <td>${session[0].time}</td>
-            <td>${session[session.length - 1].time}</td>
-            <td>${seconds}</td>
-            <td>${formatNumber(totalDamage)}</td>
-            <td style="color:${color}">${percent.toFixed(2)}%</td>
-            <td>${formatNumber(maxHit)}</td>
-            <td>${formatNumber(Math.floor(dps))}</td>
-            <td>
-                <button onclick="copyRow(${seconds}, ${totalDamage}, ${dps}, ${percent})">
-                    📋
-                </button>
-            </td>
-        </tr>
-        `;
-    });
-
-    html += `</table>`;
-
-    resultEl.innerHTML = html;
-}
-
 </script>
-
 </body>
 </html>
