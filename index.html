@@ -152,7 +152,7 @@
   }
 
   .chart-panel {
-    width: 420px;
+    width: 55%;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -679,9 +679,9 @@ function parseTime(t) {
 function formatNumber(num) { return num.toLocaleString("ru-RU"); }
 
 function getPercentColor(percent) {
-    if (percent >= 80) return "#4caf50";
-    if (percent >= 40) return "#f0a830";
-    return "#e05050";
+    if (percent >= 15) return "#f0a830";
+    if (percent >= 10) return "##eb9f34";
+    return "##348ceb";
 }
 
 // ===== SPLITTER =====
