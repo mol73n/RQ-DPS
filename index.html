@@ -268,6 +268,85 @@
   }
 
   #result-empty { color: #444; text-align: center; padding: 20px; }
+
+  /* ===== МОДАЛЬНОЕ ОКНО ===== */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+
+  .modal {
+    background: #161820;
+    border: 1px solid #2a2d3a;
+    border-radius: 8px;
+    padding: 20px 24px;
+    width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .modal h3 {
+    font-size: 13px;
+    font-weight: normal;
+    color: #c9cdd6;
+    letter-spacing: 0.05em;
+    margin: 0;
+  }
+
+  .modal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .modal-field label { color: #5a6070; font-size: 11px; }
+
+  .modal-field input[type="text"],
+  .modal-field input[type="number"] {
+    background: #1e2130;
+    border: 1px solid #3a3d50;
+    border-radius: 4px;
+    color: #c9cdd6;
+    font-family: inherit;
+    font-size: 12px;
+    padding: 6px 10px;
+    outline: none;
+    width: 100%;
+  }
+  .modal-field input:focus { border-color: #4a7fa5; }
+
+  .modal-error {
+    font-size: 11px;
+    color: #e05050;
+    min-height: 14px;
+  }
+
+  .modal-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  .btn-add-boss {
+    background: #1e2130;
+    color: #c9cdd6;
+    border: 1px solid #3a3d50;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1;
+    transition: background 0.15s;
+  }
+  .btn-add-boss:hover { background: #2a2d40; border-color: #4a7fa5; color: #4a7fa5; }
 </style>
 </head>
 
@@ -280,6 +359,27 @@
     <button id="refreshBtn">Обновить лог</button>
     <label>Босс:</label>
     <select id="targetSelect"></select>
+    <button class="btn-add-boss" id="addBossBtn" title="Добавить босса">+</button>
+  </div>
+
+  <!-- МОДАЛЬНОЕ ОКНО -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <h3>Добавить босса</h3>
+      <div class="modal-field">
+        <label>Имя</label>
+        <input type="text" id="modalName" placeholder="Имя босса">
+      </div>
+      <div class="modal-field">
+        <label>HP</label>
+        <input type="number" id="modalHp" placeholder="Количество HP" min="1">
+      </div>
+      <div class="modal-error" id="modalError"></div>
+      <div class="modal-actions">
+        <button id="modalCancel">Отмена</button>
+        <button id="modalConfirm">Добавить</button>
+      </div>
+    </div>
   </div>
 
   <div class="content">
@@ -361,12 +461,37 @@ const SESSION_COLORS = [
     { line: "#4ad4c8", fill: "rgba(74,212,200,0.07)",  avg: "rgba(74,212,200,0.7)"  },
 ];
 
-const select = document.getElementById("targetSelect");
-Object.keys(bosses).forEach(name => {
-    const option = document.createElement("option");
-    option.value = name;
-    option.textContent = name;
-    select.appendChild(option);
+// ===== КАСТОМНЫЕ БОССЫ ИЗ LOCALSTORAGE =====
+const STORAGE_KEY = "rq_custom_bosses";
+function loadCustomBosses() {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+    catch { return {}; }
+}
+function saveCustomBosses(custom) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(custom));
+}
+
+const customBosses = loadCustomBosses();
+Object.assign(bosses, customBosses);
+
+function rebuildBossSelect() {
+    const select = document.getElementById("targetSelect");
+    const prev = select.value;
+    select.innerHTML = "";
+    Object.keys(bosses).forEach(name => {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        select.appendChild(option);
+    });
+    if (prev && bosses[prev]) select.value = prev;
+}
+
+rebuildBossSelect();
+
+document.getElementById("refreshBtn").addEventListener("click", function() {
+    if (!currentFile) { alert("Сначала выбери файл"); return; }
+    readFile(currentFile);
 });
 
 document.getElementById("fileInput").addEventListener("change", function(e) {
@@ -375,12 +500,8 @@ document.getElementById("fileInput").addEventListener("change", function(e) {
     const label = document.getElementById("fileLabel");
     label.textContent = "📄 " + currentFile.name;
     label.classList.add("has-file");
-    readFile(currentFile, true);
-});
-
-document.getElementById("refreshBtn").addEventListener("click", function() {
-    if (!currentFile) { alert("Сначала выбери файл"); return; }
-    readFile(currentFile, false);
+    this.value = "";
+    readFile(currentFile);
 });
 
 document.getElementById("targetSelect").addEventListener("change", function() {
@@ -388,8 +509,58 @@ document.getElementById("targetSelect").addEventListener("change", function() {
     setTimeout(() => processTarget(currentTarget), 0);
 });
 
+// ===== МОДАЛЬНОЕ ОКНО =====
+const modalOverlay = document.getElementById("modalOverlay");
+const modalName    = document.getElementById("modalName");
+const modalHp      = document.getElementById("modalHp");
+const modalError   = document.getElementById("modalError");
 
-function readFile(file, rebuildTargets) {
+document.getElementById("addBossBtn").addEventListener("click", () => {
+    modalName.value = "";
+    modalHp.value = "";
+    modalError.textContent = "";
+    modalOverlay.classList.add("open");
+    setTimeout(() => modalName.focus(), 50);
+});
+
+document.getElementById("modalCancel").addEventListener("click", () => {
+    modalOverlay.classList.remove("open");
+});
+
+modalOverlay.addEventListener("click", (e) => {
+    if (e.target === modalOverlay) modalOverlay.classList.remove("open");
+});
+
+document.getElementById("modalConfirm").addEventListener("click", () => {
+    const name = modalName.value.trim();
+    const hp   = parseInt(modalHp.value);
+
+    if (!name)       { modalError.textContent = "Введите имя босса";       return; }
+    if (bosses[name]){ modalError.textContent = "Такой босс уже существует"; return; }
+    if (!hp || hp<=0){ modalError.textContent = "Введите корректное HP";    return; }
+
+    bosses[name] = hp;
+    const custom = loadCustomBosses();
+    custom[name] = hp;
+    saveCustomBosses(custom);
+
+    rebuildBossSelect();
+    document.getElementById("targetSelect").value = name;
+    currentTarget = name;
+    processTarget(name);
+
+    modalOverlay.classList.remove("open");
+});
+
+[modalName, modalHp].forEach(el => {
+    el.addEventListener("keydown", (e) => {
+        if (e.key === "Enter")  document.getElementById("modalConfirm").click();
+        if (e.key === "Escape") modalOverlay.classList.remove("open");
+    });
+});
+
+
+function readFile(file) {
     const reader = new FileReader();
     reader.onload = function(event) {
         const text = event.target.result;
@@ -415,24 +586,12 @@ function readFile(file, rebuildTargets) {
             }
         });
 
-        const select = document.getElementById("targetSelect");
-        if (rebuildTargets) {
-            select.innerHTML = "";
-            targets.forEach(t => {
-                const option = document.createElement("option");
-                option.value = t;
-                option.textContent = t;
-                select.appendChild(option);
-            });
-            if (select.options.length > 0) {
-                const first = select.options[0].value;
-                select.value = first;
-                currentTarget = first;
-                processTarget(first);
-            }
-        } else {
-            if (currentTarget) processTarget(currentTarget);
+        // дропдаун всегда содержит всех боссов — не трогаем его
+        // просто обрабатываем выбранного босса
+        if (!currentTarget) {
+            currentTarget = document.getElementById("targetSelect").value;
         }
+        processTarget(currentTarget);
     };
     reader.readAsText(file);
 }
@@ -466,7 +625,7 @@ function renderTable(sessions) {
     tbody.innerHTML = "";
 
     if (!sessions || sessions.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="10" id="result-empty">Нет данных</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" style="color:#444; text-align:center; padding:20px">Боёв с этим боссом не найдено</td></tr>`;
         currentSessions = [];
         checkedSessions = new Set();
         drawCheckedSessions();
@@ -680,8 +839,8 @@ function formatNumber(num) { return num.toLocaleString("ru-RU"); }
 
 function getPercentColor(percent) {
     if (percent >= 15) return "#f0a830";
-    if (percent >= 10) return "##eb9f34";
-    return "##348ceb";
+    if (percent >= 10) return "#eb9f34";
+    return "#348ceb";
 }
 
 // ===== SPLITTER =====
