@@ -98,6 +98,41 @@
   tbody tr:hover td { background: #1a1d28; cursor: pointer; }
   tbody tr.active-session td { background: #1a1f30; border-bottom-color: #2a3050; }
 
+  /* чекбоксы */
+  input[type="checkbox"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border: 1px solid #3a3d50;
+    border-radius: 3px;
+    background: #1e2130;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+  }
+  input[type="checkbox"]:checked { border-color: var(--chk-color, #4a7fa5); background: var(--chk-color, #4a7fa5); }
+  input[type="checkbox"]:checked::after {
+    content: '';
+    position: absolute;
+    left: 3px; top: 1px;
+    width: 5px; height: 8px;
+    border: 2px solid #0e0f14;
+    border-top: none; border-left: none;
+    transform: rotate(45deg);
+  }
+
+  .color-dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+    vertical-align: middle;
+    opacity: 0.3;
+    transition: opacity 0.15s;
+  }
+  tr.active-session .color-dot { opacity: 1; }
+
   /* ===== ПРАВАЯ ПАНЕЛЬ: ГРАФИК ===== */
   /* ===== РАЗДЕЛИТЕЛЬ ===== */
   .splitter {
@@ -117,7 +152,7 @@
   }
 
   .chart-panel {
-    width: 60%;
+    width: 420px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;
@@ -254,6 +289,7 @@
         <table id="sessionsTable">
           <thead>
             <tr>
+              <th></th>
               <th>#</th>
               <th>Начало</th>
               <th>Конец</th>
@@ -277,8 +313,6 @@
     <div class="chart-panel" id="chartPanel">
       <div class="chart-header">
         <span>DPS</span>
-        <label>Сессия:</label>
-        <select id="sessionSelect"></select>
         <label style="margin-left:6px">Окно:</label>
         <input type="range" id="rollingWindow" min="1" max="10" value="5" step="1">
         <span id="rollingWindowValue" style="color:#c9cdd6; min-width:24px">5s</span>
@@ -315,7 +349,17 @@ let parsedRows = [];
 let currentFile = null;
 let currentTarget = null;
 let currentSessions = [];
+let checkedSessions = new Set();
 let chart = null;
+
+const SESSION_COLORS = [
+    { line: "#4a7fa5", fill: "rgba(74,127,165,0.07)",  avg: "rgba(74,127,165,0.7)"  },
+    { line: "#e0724a", fill: "rgba(224,114,74,0.07)",  avg: "rgba(224,114,74,0.7)"  },
+    { line: "#4caf50", fill: "rgba(76,175,80,0.07)",   avg: "rgba(76,175,80,0.7)"   },
+    { line: "#b07fd4", fill: "rgba(176,127,212,0.07)", avg: "rgba(176,127,212,0.7)" },
+    { line: "#f0c040", fill: "rgba(240,192,64,0.07)",  avg: "rgba(240,192,64,0.7)"  },
+    { line: "#4ad4c8", fill: "rgba(74,212,200,0.07)",  avg: "rgba(74,212,200,0.7)"  },
+];
 
 const select = document.getElementById("targetSelect");
 Object.keys(bosses).forEach(name => {
@@ -344,11 +388,6 @@ document.getElementById("targetSelect").addEventListener("change", function() {
     setTimeout(() => processTarget(currentTarget), 0);
 });
 
-document.getElementById("sessionSelect").addEventListener("change", function() {
-    const index = parseInt(this.value);
-    drawChartForSession(index);
-    highlightTableRow(index);
-});
 
 function readFile(file, rebuildTargets) {
     const reader = new FileReader();
@@ -427,14 +466,15 @@ function renderTable(sessions) {
     tbody.innerHTML = "";
 
     if (!sessions || sessions.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="9" id="result-empty">Нет данных</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="10" id="result-empty">Нет данных</td></tr>`;
         currentSessions = [];
-        rebuildSessionSelect([]);
+        checkedSessions = new Set();
+        drawCheckedSessions();
         return;
     }
 
     currentSessions = sessions;
-    rebuildSessionSelect(sessions);
+    checkedSessions = new Set([0]); // первая сессия по умолчанию
 
     sessions.forEach((session, i) => {
         if (!session || session.length === 0) return;
@@ -451,79 +491,125 @@ function renderTable(sessions) {
         const dps = totalDamage / seconds;
         const bossHP = bosses[session[0].target];
         const percent = bossHP ? (totalDamage / bossHP) * 100 : 0;
-        const color = getPercentColor(percent);
+        const hpColor = getPercentColor(percent);
+        const c = SESSION_COLORS[i % SESSION_COLORS.length];
 
         const tr = document.createElement("tr");
         tr.id = `session-row-${i}`;
-        tr.innerHTML = `
-            <td style="color:#555">${i + 1}</td>
+
+        // чекбокс
+        const tdChk = document.createElement("td");
+        const chk = document.createElement("input");
+        chk.type = "checkbox";
+        chk.checked = (i === 0);
+        chk.style.setProperty("--chk-color", c.line);
+        chk.addEventListener("change", (e) => {
+            e.stopPropagation();
+            if (chk.checked) checkedSessions.add(i);
+            else checkedSessions.delete(i);
+            updateRowHighlight();
+            drawCheckedSessions();
+        });
+        tdChk.appendChild(chk);
+        tr.appendChild(tdChk);
+
+        tr.insertAdjacentHTML("beforeend", `
+            <td><span class="color-dot" style="background:${c.line}"></span>${i + 1}</td>
             <td>${session[0].time}</td>
             <td>${session[session.length - 1].time}</td>
             <td>${seconds}s</td>
             <td>${formatNumber(totalDamage)}</td>
-            <td style="color:${color}">${percent.toFixed(2)}%</td>
+            <td style="color:${hpColor}">${percent.toFixed(2)}%</td>
             <td>${formatNumber(maxHit)}</td>
             <td>${formatNumber(Math.floor(dps))}</td>
             <td><button onclick="event.stopPropagation(); copyRow(${seconds}, ${totalDamage}, ${dps}, ${percent})">📋</button></td>
-        `;
-        tr.addEventListener("click", () => selectSessionFromTable(i));
+        `);
+
+        tr.addEventListener("click", () => toggleSessionCheck(i));
         tbody.appendChild(tr);
     });
 
     setTimeout(() => {
-        drawChartForSession(0);
-        highlightTableRow(0);
+        updateRowHighlight();
+        drawCheckedSessions();
     }, 0);
 }
 
-function rebuildSessionSelect(sessions) {
-    const sessionSelect = document.getElementById("sessionSelect");
-    sessionSelect.innerHTML = "";
-    sessions.forEach((session, i) => {
-        const start = parseTime(session[0].time);
-        const end = parseTime(session[session.length - 1].time);
-        const seconds = Math.floor((end - start) / 1000) || 1;
-        let totalDamage = 0;
-        session.forEach(r => totalDamage += r.damage);
-        const dps = Math.floor(totalDamage / seconds);
-        const option = document.createElement("option");
-        option.value = i;
-        option.textContent = `#${i + 1}  ${session[0].time}  (${formatNumber(dps)} dps)`;
-        sessionSelect.appendChild(option);
+function toggleSessionCheck(index) {
+    const chk = document.querySelector(`#session-row-${index} input[type=checkbox]`);
+    if (!chk) return;
+    chk.checked = !chk.checked;
+    if (chk.checked) checkedSessions.add(index);
+    else checkedSessions.delete(index);
+    updateRowHighlight();
+    drawCheckedSessions();
+}
+
+function updateRowHighlight() {
+    document.querySelectorAll("#sessionsBody tr").forEach((row, i) => {
+        const dot = row.querySelector(".color-dot");
+        if (checkedSessions.has(i)) {
+            row.classList.add("active-session");
+            if (dot) dot.style.opacity = "1";
+        } else {
+            row.classList.remove("active-session");
+            if (dot) dot.style.opacity = "0.25";
+        }
     });
-    sessionSelect.value = 0;
-}
-
-function selectSessionFromTable(index) {
-    document.getElementById("sessionSelect").value = index;
-    drawChartForSession(index);
-    highlightTableRow(index);
-}
-
-function highlightTableRow(index) {
-    document.querySelectorAll("#sessionsBody tr").forEach(row => row.classList.remove("active-session"));
-    const row = document.getElementById(`session-row-${index}`);
-    if (row) row.classList.add("active-session");
 }
 
 document.getElementById("rollingWindow").addEventListener("input", function() {
     document.getElementById("rollingWindowValue").textContent = this.value + "s";
-    const index = parseInt(document.getElementById("sessionSelect").value) || 0;
-    drawChartForSession(index);
+    drawCheckedSessions();
 });
 
-function drawChartForSession(index) {
-    const session = currentSessions[index];
-    if (!session) return;
+function drawCheckedSessions() {
     const windowSize = parseInt(document.getElementById("rollingWindow").value);
-    const raw = buildDpsTimeline(session);
-    const rolling = buildRollingDps(raw, windowSize);
-    const totalDamage = session.reduce((s, r) => s + r.damage, 0);
-    const start = parseTime(session[0].time);
-    const end = parseTime(session[session.length - 1].time);
-    const seconds = Math.floor((end - start) / 1000) || 1;
-    const avgDps = Math.round(totalDamage / seconds);
-    drawChart(raw, rolling, windowSize, avgDps);
+    const datasets = [];
+    const maxLen = Math.max(...[...checkedSessions].map(i => {
+        const s = currentSessions[i];
+        if (!s) return 0;
+        const start = parseTime(s[0].time);
+        const end = parseTime(s[s.length - 1].time);
+        return Math.floor((end - start) / 1000) + 1;
+    }), 0);
+
+    checkedSessions.forEach(i => {
+        const session = currentSessions[i];
+        if (!session) return;
+        const c = SESSION_COLORS[i % SESSION_COLORS.length];
+        const raw = buildDpsTimeline(session);
+        const rolling = buildRollingDps(raw, windowSize);
+        const totalDamage = session.reduce((s, r) => s + r.damage, 0);
+        const start = parseTime(session[0].time);
+        const end = parseTime(session[session.length - 1].time);
+        const seconds = Math.floor((end - start) / 1000) || 1;
+        const avgDps = Math.round(totalDamage / seconds);
+
+        datasets.push({
+            label: `#${i + 1} Rolling`,
+            data: rolling,
+            borderColor: c.line,
+            backgroundColor: c.fill,
+            borderWidth: 2,
+            tension: 0.3,
+            pointRadius: 0,
+            fill: true
+        });
+        datasets.push({
+            label: `#${i + 1} Avg`,
+            data: Array(maxLen).fill(avgDps),
+            borderColor: c.avg,
+            borderWidth: 1,
+            borderDash: [6, 3],
+            pointRadius: 0,
+            fill: false,
+            tension: 0
+        });
+    });
+
+    const labels = Array.from({ length: maxLen }, (_, i) => i + "s");
+    drawChart(labels, datasets, windowSize);
 }
 
 function buildDpsTimeline(session) {
@@ -547,44 +633,17 @@ function buildRollingDps(data, windowSize = 5) {
     return result;
 }
 
-function drawChart(data, rollingData, windowSize, avgDps) {
+function drawChart(labels, datasets, windowSize) {
     const ctx = document.getElementById("dpsChart").getContext("2d");
     if (chart) chart.destroy();
     chart = new Chart(ctx, {
         type: "line",
-        data: {
-            labels: data.map((_, i) => i + "s"),
-            datasets: [
-                {
-                    label: `Rolling DPS (${windowSize}s)`,
-                    data: rollingData,
-                    borderColor: "#4a7fa5",
-                    backgroundColor: "rgba(74,127,165,0.08)",
-                    borderWidth: 2,
-                    tension: 0.3,
-                    pointRadius: 0,
-                    fill: true
-                },
-                {
-                    label: "Avg DPS",
-                    data: Array(rollingData.length).fill(avgDps),
-                    borderColor: "rgba(240,168,48,0.6)",
-                    borderWidth: 1,
-                    borderDash: [6, 3],
-                    pointRadius: 0,
-                    fill: false,
-                    tension: 0
-                }
-            ]
-        },
+        data: { labels, datasets },
         options: {
             responsive: true,
             maintainAspectRatio: false,
             animation: { duration: 200 },
-            interaction: {
-                mode: "index",
-                intersect: false
-            },
+            interaction: { mode: "index", intersect: false },
             plugins: {
                 legend: { display: false },
                 tooltip: {
@@ -596,12 +655,10 @@ function drawChart(data, rollingData, windowSize, avgDps) {
                     titleFont: { family: "'Courier New', monospace", size: 10 },
                     bodyFont: { family: "'Courier New', monospace", size: 11 },
                     padding: 8,
+                    filter: item => !item.dataset.label.includes("Avg"),
                     callbacks: {
                         label: function(ctx) {
-                            const label = ctx.datasetIndex === 0
-                                ? `Rolling (${windowSize}s)`
-                                : "Avg";
-                            return " " + label + ": " + ctx.parsed.y.toLocaleString("ru-RU");
+                            return " " + ctx.dataset.label + ": " + ctx.parsed.y.toLocaleString("ru-RU");
                         }
                     }
                 }
@@ -622,9 +679,9 @@ function parseTime(t) {
 function formatNumber(num) { return num.toLocaleString("ru-RU"); }
 
 function getPercentColor(percent) {
-    if (percent >= 80) return "#f0a830";
+    if (percent >= 80) return "#4caf50";
     if (percent >= 40) return "#f0a830";
-    return "#f0a830";
+    return "#e05050";
 }
 
 // ===== SPLITTER =====
