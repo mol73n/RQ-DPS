@@ -269,6 +269,57 @@
 
   #result-empty { color: #444; text-align: center; padding: 20px; }
 
+  /* ===== TOOLTIPS ===== */
+  .tip-anchor {
+    position: relative;
+    cursor: default;
+  }
+  .tip-anchor::after {
+    content: attr(data-tip);
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e2130;
+    border: 1px solid #3a3d50;
+    color: #c9cdd6;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    white-space: pre-wrap;
+    max-width: 240px;
+    text-align: center;
+    padding: 6px 10px;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 200;
+    line-height: 1.5;
+  }
+  .tip-anchor:hover::after { opacity: 1; }
+
+  /* плавающий tooltip через JS (для th и copy-btn) */
+  #js-tooltip {
+    position: fixed;
+    background: #1e2130;
+    border: 1px solid #3a3d50;
+    color: #c9cdd6;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+    white-space: pre-wrap;
+    max-width: 240px;
+    text-align: center;
+    padding: 6px 10px;
+    border-radius: 4px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 500;
+    line-height: 1.5;
+  }
+  #js-tooltip.visible { opacity: 1; }
+  #js-tooltip.success { border-color: #4caf50; color: #4caf50; }
+
   /* ===== МОДАЛЬНОЕ ОКНО ===== */
   .modal-overlay {
     display: none;
@@ -395,7 +446,7 @@
               <th>Конец</th>
               <th>Время</th>
               <th>Урон</th>
-              <th>% HP</th>
+              <th data-jstip="% от общего HP босса&#10;нанесённых за сессию">% HP</th>
               <th>Max Hit</th>
               <th>DPS</th>
               <th></th>
@@ -413,7 +464,7 @@
     <div class="chart-panel" id="chartPanel">
       <div class="chart-header">
         <span>DPS</span>
-        <label style="margin-left:6px">Окно:</label>
+        <label style="margin-left:6px" class="tip-anchor" data-tip="Rolling DPS — среднее значение DPS&#10;за последние N секунд.&#10;Сглаживает резкие пики.">Окно:</label>
         <input type="range" id="rollingWindow" min="1" max="10" value="5" step="1">
         <span id="rollingWindowValue" style="color:#c9cdd6; min-width:24px">5s</span>
       </div>
@@ -424,6 +475,8 @@
 
   </div>
 </div>
+
+<div id="js-tooltip"></div>
 
 <script>
 
@@ -681,7 +734,7 @@ function renderTable(sessions) {
             <td style="color:${hpColor}">${percent.toFixed(2)}%</td>
             <td>${formatNumber(maxHit)}</td>
             <td>${formatNumber(Math.floor(dps))}</td>
-            <td><button onclick="event.stopPropagation(); copyRow(${seconds}, ${totalDamage}, ${dps}, ${percent})">📋</button></td>
+            <td><button class="copy-btn" onclick="event.stopPropagation(); copyRow(this, ${seconds}, ${totalDamage}, ${dps}, ${percent}, '${session[0].target.replace(/'/g, "\\'")}')">📋</button></td>
         `);
 
         tr.addEventListener("click", () => toggleSessionCheck(i));
@@ -725,13 +778,19 @@ document.getElementById("rollingWindow").addEventListener("input", function() {
 function drawCheckedSessions() {
     const windowSize = parseInt(document.getElementById("rollingWindow").value);
     const datasets = [];
+
+    if (checkedSessions.size === 0) {
+        drawChart([], [], windowSize);
+        return;
+    }
+
     const maxLen = Math.max(...[...checkedSessions].map(i => {
         const s = currentSessions[i];
         if (!s) return 0;
         const start = parseTime(s[0].time);
         const end = parseTime(s[s.length - 1].time);
         return Math.floor((end - start) / 1000) + 1;
-    }), 0);
+    }));
 
     checkedSessions.forEach(i => {
         const session = currentSessions[i];
@@ -814,10 +873,13 @@ function drawChart(labels, datasets, windowSize) {
                     titleFont: { family: "'Courier New', monospace", size: 10 },
                     bodyFont: { family: "'Courier New', monospace", size: 11 },
                     padding: 8,
-                    filter: item => !item.dataset.label.includes("Avg"),
+                    filter: item => true,
                     callbacks: {
                         label: function(ctx) {
-                            return " " + ctx.dataset.label + ": " + ctx.parsed.y.toLocaleString("ru-RU");
+                            const isAvg = ctx.dataset.label.includes("Avg");
+                            const prefix = isAvg ? "avg" : "dps";
+                            const sessionNum = ctx.dataset.label.match(/#(\d+)/)?.[1] ?? "";
+                            return ` #${sessionNum} ${prefix}: ${ctx.parsed.y.toLocaleString("ru-RU")}`;
                         }
                     }
                 }
@@ -877,13 +939,46 @@ function getPercentColor(percent) {
     });
 })();
 
-function copyRow(seconds, dmg, dps, percent) {
+// ===== JS TOOLTIP =====
+const jsTooltip = document.getElementById("js-tooltip");
+let jsTipTimer = null;
+
+function showJsTip(text, x, y, isSuccess = false) {
+    clearTimeout(jsTipTimer);
+    jsTooltip.textContent = text;
+    jsTooltip.classList.toggle("success", isSuccess);
+    jsTooltip.style.left = x + "px";
+    jsTooltip.style.top  = y + "px";
+    jsTooltip.classList.add("visible");
+}
+
+function hideJsTip(delay = 0) {
+    jsTipTimer = setTimeout(() => jsTooltip.classList.remove("visible"), delay);
+}
+
+// hover для data-jstip элементов (th и подобные)
+document.addEventListener("mouseover", (e) => {
+    const el = e.target.closest("[data-jstip]");
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    showJsTip(el.dataset.jstip, r.left + r.width / 2 - 60, r.bottom + 6);
+});
+document.addEventListener("mouseout", (e) => {
+    if (e.target.closest("[data-jstip]")) hideJsTip(100);
+});
+
+function copyRow(btn, seconds, dmg, dps, percent, bossName) {
     const text =
-`t: ${seconds}
+`босс: ${bossName}
+t: ${seconds}s
 dmg: ${formatNumber(dmg)}
 dps: ${formatNumber(Math.floor(dps))}
 hp: ${percent.toFixed(2)}%`;
     navigator.clipboard.writeText(text);
+
+    const r = btn.getBoundingClientRect();
+    showJsTip("Скопировано!", r.left + r.width / 2 - 40, r.bottom + 6, true);
+    hideJsTip(1500);
 }
 
 </script>
