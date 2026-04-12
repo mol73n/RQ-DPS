@@ -667,20 +667,55 @@ document.getElementById("resetBossesBtn").addEventListener("click", () => {
 });
 
 
+// ===== СЕРИАЛИЗАЦИЯ v2 =====
+// Формат: { version:2, sessions:[{ target, hits:[[time, d1, d2, ...], ...] }] }
+function serializeSessions(sessionIndices) {
+    return sessionIndices.map(i => {
+        const session = currentSessions[i];
+        // группируем хиты по секунде
+        const grouped = new Map();
+        session.forEach(r => {
+            if (!grouped.has(r.time)) grouped.set(r.time, []);
+            grouped.get(r.time).push(r.damage);
+        });
+        return {
+            target: session[0].target,
+            hits: [...grouped.entries()].map(([time, dmgs]) => [time, ...dmgs])
+        };
+    });
+}
+
+function deserializeSessions(data) {
+    // поддержка v1 (старый формат) и v2 (новый)
+    return data.sessions.map(s => {
+        if (!s.target || !Array.isArray(s.hits)) return null;
+        let hits = [];
+        if (data.version === 2) {
+            // v2: [[time, d1, d2, ...], ...]
+            s.hits.forEach(row => {
+                const time = row[0];
+                for (let k = 1; k < row.length; k++) {
+                    hits.push({ damage: row[k], target: s.target, time });
+                }
+            });
+        } else {
+            // v1: [{damage, time}, ...]
+            hits = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
+        }
+        const session = hits;
+        session._imported = true;
+        return session;
+    }).filter(Boolean);
+}
+
 // ===== ЭКСПОРТ JSON =====
 document.getElementById("exportBtn").addEventListener("click", () => {
     if (checkedSessions.size === 0) { alert("Нет отмеченных сессий для экспорта"); return; }
 
-    const toExport = [...checkedSessions]
-        .filter(i => currentSessions[i] && !currentSessions[i]._imported)
-        .map(i => ({
-            target: currentSessions[i][0].target,
-            hits: currentSessions[i].map(r => ({ damage: r.damage, time: r.time }))
-        }));
+    const indices = [...checkedSessions].filter(i => currentSessions[i] && !currentSessions[i]._imported);
+    if (indices.length === 0) { alert("Нет своих сессий для экспорта (импортированные не экспортируются)"); return; }
 
-    if (toExport.length === 0) { alert("Нет своих сессий для экспорта (импортированные не экспортируются)"); return; }
-
-    const json = JSON.stringify({ version: 1, sessions: toExport }, null, 2);
+    const json = JSON.stringify({ version: 2, sessions: serializeSessions(indices) }, null, 2);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -702,17 +737,13 @@ document.getElementById("importInput").addEventListener("change", function(e) {
             const data = JSON.parse(event.target.result);
             if (!data.sessions || !Array.isArray(data.sessions)) throw new Error();
 
-            let added = 0;
-            data.sessions.forEach(s => {
-                if (!s.target || !Array.isArray(s.hits)) return;
-                if (!bosses[s.target]) { bosses[s.target] = 0; rebuildBossSelect(); }
-                const session = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
-                session._imported = true;
-                importedSessions.push(session);
-                added++;
-            });
+            const sessions = deserializeSessions(data);
+            if (sessions.length === 0) { alert("В файле не найдено валидных сессий"); return; }
 
-            if (added === 0) { alert("В файле не найдено валидных сессий"); return; }
+            sessions.forEach(s => {
+                if (!bosses[s[0].target]) { bosses[s[0].target] = 0; rebuildBossSelect(); }
+                importedSessions.push(s);
+            });
 
             const label = document.getElementById("importLabel");
             label.textContent = `⬇ Импорт JSON (${importedSessions.length})`;
@@ -805,7 +836,7 @@ function renderTable(sessions) {
         sessions.forEach((session) => {
             currentSessions.push(session);
             const idx = currentSessions.length - 1;
-            checkedSessions.add(idx);
+            // не добавляем в checkedSessions — по умолчанию всё выключено
             tbody.appendChild(buildSessionRow(session, idx, false));
         });
     }
@@ -854,7 +885,7 @@ function buildSessionRow(session, idx, isImported) {
     const tdChk = document.createElement("td");
     const chk = document.createElement("input");
     chk.type = "checkbox";
-    chk.checked = !isImported;
+    chk.checked = false;
     chk.style.setProperty("--chk-color", c.line);
     chk.addEventListener("change", (e) => {
         e.stopPropagation();
@@ -1082,16 +1113,10 @@ document.getElementById("shareBtn").addEventListener("click", () => {
         return;
     }
 
-    const toShare = [...checkedSessions]
-        .filter(i => currentSessions[i])
-        .map(i => ({
-            target: currentSessions[i][0].target,
-            hits: currentSessions[i].map(r => ({ damage: r.damage, time: r.time }))
-        }));
+    const indices = [...checkedSessions].filter(i => currentSessions[i]);
+    if (indices.length === 0) { alert("Нет сессий для шеринга"); return; }
 
-    if (toShare.length === 0) { alert("Нет сессий для шеринга"); return; }
-
-    const json = JSON.stringify({ version: 1, sessions: toShare });
+    const json = JSON.stringify({ version: 2, sessions: serializeSessions(indices) });
     const compressed = LZString.compressToEncodedURIComponent(json);
     const url = location.href.split('#')[0] + '#share=' + compressed;
 
@@ -1129,17 +1154,13 @@ document.getElementById("loadShareBtn").addEventListener("click", () => {
         return;
     }
 
-    let added = 0;
-    data.sessions.forEach(s => {
-        if (!s.target || !Array.isArray(s.hits)) return;
-        if (!bosses[s.target]) { bosses[s.target] = 0; rebuildBossSelect(); }
-        const session = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
-        session._imported = true;
-        importedSessions.push(session);
-        added++;
-    });
+    const sessions = deserializeSessions(data);
+    if (sessions.length === 0) { alert("В ссылке не найдено валидных сессий"); return; }
 
-    if (added === 0) { alert("В ссылке не найдено валидных сессий"); return; }
+    sessions.forEach(s => {
+        if (!bosses[s[0].target]) { bosses[s[0].target] = 0; rebuildBossSelect(); }
+        importedSessions.push(s);
+    });
 
     document.getElementById("shareLinkInput").value = "";
     const label = document.getElementById("importLabel");
@@ -1159,22 +1180,18 @@ document.getElementById("loadShareBtn").addEventListener("click", () => {
         if (!json) return;
         const data = JSON.parse(json);
         if (!data.sessions) return;
-        data.sessions.forEach(s => {
-            if (!s.target || !Array.isArray(s.hits)) return;
-            if (!bosses[s.target]) { bosses[s.target] = 0; rebuildBossSelect(); }
-            const session = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
-            session._imported = true;
-            importedSessions.push(session);
+        const sessions = deserializeSessions(data);
+        sessions.forEach(s => {
+            if (!bosses[s[0].target]) { bosses[s[0].target] = 0; rebuildBossSelect(); }
+            importedSessions.push(s);
         });
         if (importedSessions.length > 0) {
-            // переключаемся на босса из ссылки
             const firstTarget = data.sessions[0]?.target;
             if (firstTarget && bosses[firstTarget]) {
                 document.getElementById("targetSelect").value = firstTarget;
                 currentTarget = firstTarget;
             }
             processTarget(currentTarget);
-            // убираем hash из URL чтобы не мешал
             history.replaceState(null, '', location.pathname);
         }
     } catch {}
