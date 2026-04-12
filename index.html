@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <title>RQ DPS</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -398,6 +399,33 @@
     transition: background 0.15s;
   }
   .btn-add-boss:hover { background: #2a2d40; border-color: #4a7fa5; color: #4a7fa5; }
+
+  /* импортированные сессии */
+  tr.imported-row td { color: #8a8fa0; font-style: italic; }
+  tr.imported-row .color-dot { opacity: 0.5; }
+  tr.imported-row.active-session td { color: #c9cdd6; }
+  .imported-badge {
+    display: inline-block;
+    font-size: 9px;
+    font-style: normal;
+    background: #2a2d3a;
+    color: #5a6070;
+    border-radius: 3px;
+    padding: 1px 4px;
+    margin-left: 4px;
+    vertical-align: middle;
+    letter-spacing: 0.05em;
+  }
+  .table-section-divider td {
+    padding: 4px 10px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #3a4050;
+    background: #0e0f14;
+    border-bottom: 1px solid #2a2d3a;
+    cursor: default !important;
+  }
 </style>
 </head>
 
@@ -411,6 +439,19 @@
     <label>Босс:</label>
     <select id="targetSelect"></select>
     <button class="btn-add-boss" id="addBossBtn" title="Добавить босса">+</button>
+    <button class="btn-add-boss" id="resetBossesBtn" title="Сбросить до стандартного списка" style="color:#e05050; border-color:#5a2a2a;">↺</button>
+    <div style="width:1px; background:#2a2d3a; align-self:stretch; margin: 0 4px;"></div>
+    <button id="exportBtn">⬆ Экспорт JSON</button>
+    <input type="file" id="importInput" accept=".json">
+    <label for="importInput" class="file-btn" id="importLabel">⬇ Импорт JSON</label>
+    <div style="width:1px; background:#2a2d3a; align-self:stretch; margin: 0 4px;"></div>
+    <button id="shareBtn">🔗 Поделиться</button>
+    <input type="text" id="shareLinkInput" placeholder="Вставить ссылку..." style="
+      background:#1e2130; color:#c9cdd6; border:1px solid #3a3d50;
+      border-radius:4px; font-family:inherit; font-size:12px;
+      padding:5px 8px; width:200px; outline:none;
+    ">
+    <button id="loadShareBtn">Загрузить</button>
   </div>
 
   <!-- МОДАЛЬНОЕ ОКНО -->
@@ -502,6 +543,7 @@ let parsedRows = [];
 let currentFile = null;
 let currentTarget = null;
 let currentSessions = [];
+let importedSessions = []; // сессии загруженные из чужих JSON
 let checkedSessions = new Set();
 let chart = null;
 
@@ -542,8 +584,7 @@ function rebuildBossSelect() {
 
 rebuildBossSelect();
 
-document.getElementById("refreshBtn").addEventListener("click", function() {
-    if (!currentFile) { alert("Сначала выбери файл"); return; }
+document.getElementById("refreshBtn").addEventListener("click", function() {    if (!currentFile) { alert("Сначала выбери файл"); return; }
     readFile(currentFile);
 });
 
@@ -612,6 +653,78 @@ document.getElementById("modalConfirm").addEventListener("click", () => {
     });
 });
 
+// ===== СБРОС БОССОВ =====
+document.getElementById("resetBossesBtn").addEventListener("click", () => {
+    if (!confirm("Сбросить список боссов до стандартного?\nВсе добавленные вручную боссы будут удалены.")) return;
+    const custom = loadCustomBosses();
+    Object.keys(custom).forEach(name => delete bosses[name]);
+    localStorage.removeItem(STORAGE_KEY);
+    rebuildBossSelect();
+    if (!bosses[currentTarget]) {
+        currentTarget = document.getElementById("targetSelect").value;
+        processTarget(currentTarget);
+    }
+});
+
+
+// ===== ЭКСПОРТ JSON =====
+document.getElementById("exportBtn").addEventListener("click", () => {
+    if (checkedSessions.size === 0) { alert("Нет отмеченных сессий для экспорта"); return; }
+
+    const toExport = [...checkedSessions]
+        .filter(i => currentSessions[i] && !currentSessions[i]._imported)
+        .map(i => ({
+            target: currentSessions[i][0].target,
+            hits: currentSessions[i].map(r => ({ damage: r.damage, time: r.time }))
+        }));
+
+    if (toExport.length === 0) { alert("Нет своих сессий для экспорта (импортированные не экспортируются)"); return; }
+
+    const json = JSON.stringify({ version: 1, sessions: toExport }, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `rqdps_${currentTarget || "export"}_${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+});
+
+// ===== ИМПОРТ JSON =====
+document.getElementById("importInput").addEventListener("change", function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    this.value = "";
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        try {
+            const data = JSON.parse(event.target.result);
+            if (!data.sessions || !Array.isArray(data.sessions)) throw new Error();
+
+            let added = 0;
+            data.sessions.forEach(s => {
+                if (!s.target || !Array.isArray(s.hits)) return;
+                if (!bosses[s.target]) { bosses[s.target] = 0; rebuildBossSelect(); }
+                const session = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
+                session._imported = true;
+                importedSessions.push(session);
+                added++;
+            });
+
+            if (added === 0) { alert("В файле не найдено валидных сессий"); return; }
+
+            const label = document.getElementById("importLabel");
+            label.textContent = `⬇ Импорт JSON (${importedSessions.length})`;
+            label.classList.add("has-file");
+
+            processTarget(currentTarget);
+        } catch {
+            alert("Ошибка чтения файла. Убедитесь что это корректный RQ DPS JSON.");
+        }
+    };
+    reader.readAsText(file);
+});
 
 function readFile(file) {
     const reader = new FileReader();
@@ -639,8 +752,6 @@ function readFile(file) {
             }
         });
 
-        // дропдаун всегда содержит всех боссов — не трогаем его
-        // просто обрабатываем выбранного босса
         if (!currentTarget) {
             currentTarget = document.getElementById("targetSelect").value;
         }
@@ -676,75 +787,100 @@ function processTarget(target) {
 function renderTable(sessions) {
     const tbody = document.getElementById("sessionsBody");
     tbody.innerHTML = "";
+    currentSessions = [];
+    checkedSessions = new Set();
 
-    if (!sessions || sessions.length === 0) {
+    const ownEmpty = !sessions || sessions.length === 0;
+    const filteredImported = importedSessions.filter(s => s[0] && s[0].target === currentTarget);
+    const impEmpty = filteredImported.length === 0;
+
+    if (ownEmpty && impEmpty) {
         tbody.innerHTML = `<tr><td colspan="10" style="color:#444; text-align:center; padding:20px">Боёв с этим боссом не найдено</td></tr>`;
-        currentSessions = [];
-        checkedSessions = new Set();
         drawCheckedSessions();
         return;
     }
 
-    currentSessions = sessions;
-    checkedSessions = new Set([0]); // первая сессия по умолчанию
-
-    sessions.forEach((session, i) => {
-        if (!session || session.length === 0) return;
-
-        let totalDamage = 0, maxHit = 0;
-        session.forEach(r => {
-            totalDamage += r.damage;
-            if (r.damage > maxHit) maxHit = r.damage;
+    // --- свои сессии ---
+    if (!ownEmpty) {
+        sessions.forEach((session) => {
+            currentSessions.push(session);
+            const idx = currentSessions.length - 1;
+            checkedSessions.add(idx);
+            tbody.appendChild(buildSessionRow(session, idx, false));
         });
+    }
 
-        const start = parseTime(session[0].time);
-        const end = parseTime(session[session.length - 1].time);
-        const seconds = Math.floor((end - start) / 1000) || 1;
-        const dps = totalDamage / seconds;
-        const bossHP = bosses[session[0].target];
-        const percent = bossHP ? (totalDamage / bossHP) * 100 : 0;
-        const hpColor = getPercentColor(percent);
-        const c = SESSION_COLORS[i % SESSION_COLORS.length];
-
-        const tr = document.createElement("tr");
-        tr.id = `session-row-${i}`;
-
-        // чекбокс
-        const tdChk = document.createElement("td");
-        const chk = document.createElement("input");
-        chk.type = "checkbox";
-        chk.checked = (i === 0);
-        chk.style.setProperty("--chk-color", c.line);
-        chk.addEventListener("change", (e) => {
-            e.stopPropagation();
-            if (chk.checked) checkedSessions.add(i);
-            else checkedSessions.delete(i);
-            updateRowHighlight();
-            drawCheckedSessions();
+    // --- разделитель + импортированные ---
+    if (!impEmpty) {
+        if (!ownEmpty) {
+            const divRow = document.createElement("tr");
+            divRow.className = "table-section-divider";
+            divRow.innerHTML = `<td colspan="10">Импортированные</td>`;
+            tbody.appendChild(divRow);
+        }
+        filteredImported.forEach((session) => {
+            currentSessions.push(session);
+            const idx = currentSessions.length - 1;
+            tbody.appendChild(buildSessionRow(session, idx, true));
         });
-        tdChk.appendChild(chk);
-        tr.appendChild(tdChk);
-
-        tr.insertAdjacentHTML("beforeend", `
-            <td><span class="color-dot" style="background:${c.line}"></span>${i + 1}</td>
-            <td>${session[0].time}</td>
-            <td>${session[session.length - 1].time}</td>
-            <td>${seconds}s</td>
-            <td>${formatNumber(totalDamage)}</td>
-            <td style="color:${hpColor}">${percent.toFixed(2)}%</td>
-            <td>${formatNumber(maxHit)}</td>
-            <td>${formatNumber(Math.floor(dps))}</td>
-            <td><button class="copy-btn" onclick="event.stopPropagation(); copyRow(this, ${seconds}, ${totalDamage}, ${dps}, ${percent}, '${session[0].target.replace(/'/g, "\\'")}')">📋</button></td>
-        `);
-
-        tr.addEventListener("click", () => toggleSessionCheck(i));
-        tbody.appendChild(tr);
-    });
+    }
 
     setTimeout(() => {
         updateRowHighlight();
         drawCheckedSessions();
     }, 0);
+}
+
+function buildSessionRow(session, idx, isImported) {
+    let totalDamage = 0, maxHit = 0;
+    session.forEach(r => {
+        totalDamage += r.damage;
+        if (r.damage > maxHit) maxHit = r.damage;
+    });
+
+    const start = parseTime(session[0].time);
+    const end = parseTime(session[session.length - 1].time);
+    const seconds = Math.floor((end - start) / 1000) || 1;
+    const dps = totalDamage / seconds;
+    const bossHP = bosses[session[0].target];
+    const percent = bossHP ? (totalDamage / bossHP) * 100 : 0;
+    const hpColor = getPercentColor(percent);
+    const c = SESSION_COLORS[idx % SESSION_COLORS.length];
+
+    const tr = document.createElement("tr");
+    tr.id = `session-row-${idx}`;
+    if (isImported) tr.classList.add("imported-row");
+
+    const tdChk = document.createElement("td");
+    const chk = document.createElement("input");
+    chk.type = "checkbox";
+    chk.checked = !isImported;
+    chk.style.setProperty("--chk-color", c.line);
+    chk.addEventListener("change", (e) => {
+        e.stopPropagation();
+        if (chk.checked) checkedSessions.add(idx);
+        else checkedSessions.delete(idx);
+        updateRowHighlight();
+        drawCheckedSessions();
+    });
+    tdChk.appendChild(chk);
+    tr.appendChild(tdChk);
+
+    const badge = isImported ? `<span class="imported-badge">imported</span>` : "";
+    tr.insertAdjacentHTML("beforeend", `
+        <td><span class="color-dot" style="background:${c.line}"></span>${idx + 1}${badge}</td>
+        <td>${session[0].time}</td>
+        <td>${session[session.length - 1].time}</td>
+        <td>${seconds}s</td>
+        <td>${formatNumber(totalDamage)}</td>
+        <td style="color:${hpColor}">${percent.toFixed(2)}%</td>
+        <td>${formatNumber(maxHit)}</td>
+        <td>${formatNumber(Math.floor(dps))}</td>
+        <td><button class="copy-btn" onclick="event.stopPropagation(); copyRow(this, ${seconds}, ${totalDamage}, ${dps}, ${percent}, '${session[0].target.replace(/'/g, "\\'")}')">📋</button></td>
+    `);
+
+    tr.addEventListener("click", () => toggleSessionCheck(idx));
+    return tr;
 }
 
 function toggleSessionCheck(index) {
@@ -937,6 +1073,111 @@ function getPercentColor(percent) {
         document.addEventListener("mousemove", onMove);
         document.addEventListener("mouseup", onUp);
     });
+})();
+
+// ===== ШЕРИНГ ЧЕРЕЗ URL =====
+document.getElementById("shareBtn").addEventListener("click", () => {
+    if (checkedSessions.size === 0) {
+        alert("Нет отмеченных сессий для шеринга");
+        return;
+    }
+
+    const toShare = [...checkedSessions]
+        .filter(i => currentSessions[i])
+        .map(i => ({
+            target: currentSessions[i][0].target,
+            hits: currentSessions[i].map(r => ({ damage: r.damage, time: r.time }))
+        }));
+
+    if (toShare.length === 0) { alert("Нет сессий для шеринга"); return; }
+
+    const json = JSON.stringify({ version: 1, sessions: toShare });
+    const compressed = LZString.compressToEncodedURIComponent(json);
+    const url = location.href.split('#')[0] + '#share=' + compressed;
+
+    navigator.clipboard.writeText(url).then(() => {
+        const btn = document.getElementById("shareBtn");
+        const orig = btn.textContent;
+        btn.textContent = "✓ Скопировано!";
+        setTimeout(() => btn.textContent = orig, 2000);
+    });
+});
+
+document.getElementById("loadShareBtn").addEventListener("click", () => {
+    const raw = document.getElementById("shareLinkInput").value.trim();
+    if (!raw) { alert("Вставьте ссылку"); return; }
+
+    // поддерживаем как полный URL так и просто hash-часть
+    let compressed;
+    try {
+        const hash = raw.includes('#share=') ? raw.split('#share=')[1] : raw;
+        compressed = hash;
+        if (!compressed) throw new Error();
+    } catch {
+        alert("Неверный формат ссылки");
+        return;
+    }
+
+    let data;
+    try {
+        const json = LZString.decompressFromEncodedURIComponent(compressed);
+        if (!json) throw new Error();
+        data = JSON.parse(json);
+        if (!data.sessions || !Array.isArray(data.sessions)) throw new Error();
+    } catch {
+        alert("Не удалось декодировать ссылку. Проверьте что ссылка скопирована полностью.");
+        return;
+    }
+
+    let added = 0;
+    data.sessions.forEach(s => {
+        if (!s.target || !Array.isArray(s.hits)) return;
+        if (!bosses[s.target]) { bosses[s.target] = 0; rebuildBossSelect(); }
+        const session = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
+        session._imported = true;
+        importedSessions.push(session);
+        added++;
+    });
+
+    if (added === 0) { alert("В ссылке не найдено валидных сессий"); return; }
+
+    document.getElementById("shareLinkInput").value = "";
+    const label = document.getElementById("importLabel");
+    label.textContent = `⬇ Импорт JSON (${importedSessions.length})`;
+    label.classList.add("has-file");
+
+    processTarget(currentTarget);
+});
+
+// автозагрузка при открытии файла с #share= в URL
+(function() {
+    const hash = location.hash;
+    if (!hash.startsWith('#share=')) return;
+    const compressed = hash.slice(7);
+    try {
+        const json = LZString.decompressFromEncodedURIComponent(compressed);
+        if (!json) return;
+        const data = JSON.parse(json);
+        if (!data.sessions) return;
+        data.sessions.forEach(s => {
+            if (!s.target || !Array.isArray(s.hits)) return;
+            if (!bosses[s.target]) { bosses[s.target] = 0; rebuildBossSelect(); }
+            const session = s.hits.map(h => ({ damage: h.damage, target: s.target, time: h.time }));
+            session._imported = true;
+            importedSessions.push(session);
+        });
+        if (importedSessions.length > 0) {
+            // переключаемся на босса из ссылки
+            const firstTarget = data.sessions[0]?.target;
+            if (firstTarget && bosses[firstTarget]) {
+                document.getElementById("targetSelect").value = firstTarget;
+                currentTarget = firstTarget;
+            }
+            processTarget(currentTarget);
+            // убираем hash из URL чтобы не мешал
+            history.replaceState(null, '', location.pathname);
+        }
+    } catch {}
 })();
 
 // ===== JS TOOLTIP =====
