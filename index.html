@@ -435,7 +435,6 @@
   <div class="controls">
     <input type="file" id="fileInput" accept=".htm,.html">
     <label for="fileInput" class="file-btn" id="fileLabel">📂 Открыть лог</label>
-    <button id="refreshBtn">Обновить лог</button>
     <label>Босс:</label>
     <select id="targetSelect"></select>
     <button class="btn-add-boss" id="addBossBtn" title="Добавить босса">+</button>
@@ -583,10 +582,6 @@ function rebuildBossSelect() {
 }
 
 rebuildBossSelect();
-
-document.getElementById("refreshBtn").addEventListener("click", function() {    if (!currentFile) { alert("Сначала выбери файл"); return; }
-    readFile(currentFile);
-});
 
 document.getElementById("fileInput").addEventListener("change", function(e) {
     currentFile = e.target.files[0];
@@ -1106,12 +1101,9 @@ function getPercentColor(percent) {
     });
 })();
 
-// ===== ШЕРИНГ ЧЕРЕЗ URL =====
+// ===== ШЕРИНГ ЧЕРЕЗ URL (LZ-STRING) =====
 document.getElementById("shareBtn").addEventListener("click", () => {
-    if (checkedSessions.size === 0) {
-        alert("Нет отмеченных сессий для шеринга");
-        return;
-    }
+    if (checkedSessions.size === 0) { alert("Нет отмеченных сессий для шеринга"); return; }
 
     const indices = [...checkedSessions].filter(i => currentSessions[i]);
     if (indices.length === 0) { alert("Нет сессий для шеринга"); return; }
@@ -1129,33 +1121,26 @@ document.getElementById("shareBtn").addEventListener("click", () => {
 });
 
 document.getElementById("loadShareBtn").addEventListener("click", () => {
-    const raw = document.getElementById("shareLinkInput").value.trim();
+    loadFromLink(document.getElementById("shareLinkInput").value.trim());
+});
+
+function loadFromLink(raw) {
     if (!raw) { alert("Вставьте ссылку"); return; }
 
-    // поддерживаем как полный URL так и просто hash-часть
-    let compressed;
-    try {
-        const hash = raw.includes('#share=') ? raw.split('#share=')[1] : raw;
-        compressed = hash;
-        if (!compressed) throw new Error();
-    } catch {
-        alert("Неверный формат ссылки");
-        return;
-    }
-
-    let data;
+    const compressed = raw.includes('#share=') ? raw.split('#share=')[1] : raw;
     try {
         const json = LZString.decompressFromEncodedURIComponent(compressed);
         if (!json) throw new Error();
-        data = JSON.parse(json);
-        if (!data.sessions || !Array.isArray(data.sessions)) throw new Error();
+        applyImportedData(JSON.parse(json));
     } catch {
         alert("Не удалось декодировать ссылку. Проверьте что ссылка скопирована полностью.");
-        return;
     }
+}
 
+function applyImportedData(data) {
+    if (!data.sessions || !Array.isArray(data.sessions)) { alert("Неверный формат данных"); return; }
     const sessions = deserializeSessions(data);
-    if (sessions.length === 0) { alert("В ссылке не найдено валидных сессий"); return; }
+    if (sessions.length === 0) { alert("Не найдено валидных сессий"); return; }
 
     sessions.forEach(s => {
         if (!bosses[s[0].target]) { bosses[s[0].target] = 0; rebuildBossSelect(); }
@@ -1168,32 +1153,17 @@ document.getElementById("loadShareBtn").addEventListener("click", () => {
     label.classList.add("has-file");
 
     processTarget(currentTarget);
-});
+}
 
-// автозагрузка при открытии файла с #share= в URL
+// автозагрузка при открытии с #share= в URL
 (function() {
     const hash = location.hash;
     if (!hash.startsWith('#share=')) return;
-    const compressed = hash.slice(7);
     try {
-        const json = LZString.decompressFromEncodedURIComponent(compressed);
+        const json = LZString.decompressFromEncodedURIComponent(hash.slice(7));
         if (!json) return;
-        const data = JSON.parse(json);
-        if (!data.sessions) return;
-        const sessions = deserializeSessions(data);
-        sessions.forEach(s => {
-            if (!bosses[s[0].target]) { bosses[s[0].target] = 0; rebuildBossSelect(); }
-            importedSessions.push(s);
-        });
-        if (importedSessions.length > 0) {
-            const firstTarget = data.sessions[0]?.target;
-            if (firstTarget && bosses[firstTarget]) {
-                document.getElementById("targetSelect").value = firstTarget;
-                currentTarget = firstTarget;
-            }
-            processTarget(currentTarget);
-            history.replaceState(null, '', location.pathname);
-        }
+        applyImportedData(JSON.parse(json));
+        history.replaceState(null, '', location.pathname);
     } catch {}
 })();
 
