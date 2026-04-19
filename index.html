@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <title>RQ DPS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/lz-string@1.5.0/libs/lz-string.min.js"></script>
 <style>
@@ -13,7 +15,7 @@
     overflow: hidden;
     background: #0e0f14;
     color: #c9cdd6;
-    font-family: 'Courier New', monospace;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
     font-size: 13px;
   }
 
@@ -285,7 +287,7 @@
     border: 1px solid #3a3d50;
     color: #c9cdd6;
     font-size: 11px;
-    font-family: 'Courier New', monospace;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
     white-space: pre-wrap;
     max-width: 240px;
     text-align: center;
@@ -306,7 +308,7 @@
     border: 1px solid #3a3d50;
     color: #c9cdd6;
     font-size: 11px;
-    font-family: 'Courier New', monospace;
+    font-family: 'JetBrains Mono', 'Courier New', monospace;
     white-space: pre-wrap;
     max-width: 240px;
     text-align: center;
@@ -521,7 +523,7 @@
 <script>
 
 const bosses = {
-    "Архон": 39771080,
+    "Архон": 9771080,
     "Баксбакуалануксивайе": 178354700,
     "Воко": 214548640,
     "Гигантская Тортолла": 39479610,
@@ -1032,8 +1034,8 @@ function drawChart(labels, datasets, windowSize) {
                     borderWidth: 1,
                     titleColor: "#5a6070",
                     bodyColor: "#c9cdd6",
-                    titleFont: { family: "'Courier New', monospace", size: 10 },
-                    bodyFont: { family: "'Courier New', monospace", size: 11 },
+                    titleFont: { family: "'JetBrains Mono', 'Courier New', monospace", size: 10 },
+                    bodyFont: { family: "'JetBrains Mono', 'Courier New', monospace", size: 11 },
                     padding: 8,
                     filter: item => true,
                     callbacks: {
