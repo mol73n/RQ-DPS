@@ -791,7 +791,7 @@ function readFile(file) {
             }
 
             // строка без цели — "Вы нанесли ХХХ урона."
-            const partialMatch = textContent.match(/Вы нанесли (\d+) урона\./);
+            const partialMatch = !fullMatch && textContent.match(/Вы нанесли (\d+) урона\.?/);
             if (partialMatch && lastBoss) {
                 const damage = parseInt(partialMatch[1]);
                 if (damage <= 0) return;
@@ -1221,7 +1221,7 @@ document.addEventListener("mouseout", (e) => {
 
 function copyRow(btn, seconds, dmg, dps, percent, bossName) {
     const text =
-`босс: ${bossName}
+`Босс: ${bossName}
 t: ${seconds}s
 dmg: ${formatNumber(dmg)}
 dps: ${formatNumber(Math.floor(dps))}
